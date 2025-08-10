@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>宅建 学習スケジュール（カレンダー版）</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; }
+  h1 { text-align: center; }
+  table { border-collapse: collapse; margin: auto; }
+  td, th { border: 1px solid #ccc; padding: 5px; text-align: center; }
+  .study { background-color: #c8f7c5; }
+  .review { background-color: #fef9c3; }
+</style>
+</head>
+<body>
+
+<h1>宅建 学習スケジュール（カレンダー表示）</h1>
+<div id="calendar"></div>
+
+<script>
+// 学習データ
+const schedule = [
+  { date: "2025-08-10", task: "宅：宅建業の基本", type: "study" },
+  { date: "2025-08-11", task: "宅：宅建業の基本", type: "review" },
+  { date: "2025-08-13", task: "宅：宅建業の基本", type: "review" },
+  { date: "2025-08-17", task: "宅：宅建業の基本", type: "review" },
+  { date: "2025-08-24", task: "宅：宅建業の基本", type: "review" },
+  { date: "2025-09-09", task: "宅：宅建業の基本", type: "review" },
+  { date: "2025-08-11", task: "宅：宅建業の免許", type: "study" },
+  { date: "2025-08-12", task: "宅：宅建業の免許", type: "review" },
+  { date: "2025-08-14", task: "宅：宅建業の免許", type: "review" }
+];
+
+// カレンダー生成
+function generateCalendar(year, month) {
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+  let html = `<table><tr><th>日</th><th>月</th><th>火</th><th>水</th><th>木</th><th>金</th><th>土</th></tr><tr>`;
+  
+  // 前の空白
+  for (let i = 0; i < firstDay.getDay(); i++) html += "<td></td>";
+
+  // 日付
+  for (let day = 1; day <= lastDay.getDate(); day++) {
+    const dateStr = `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    const entry = schedule.find(e => e.date === dateStr);
+    let cellClass = "";
+    let cellText = day;
+    if (entry) {
+      cellClass = entry.type;
+      cellText += `<br><small>${entry.task}</small>`;
+    }
+    html += `<td class="${cellClass}">${cellText}</td>`;
+    if ((firstDay.getDay() + day) % 7 === 0) html += "</tr><tr>";
+  }
+
+  html += "</tr></table>";
+  document.getElementById("calendar").innerHTML = html;
+}
+
+generateCalendar(2025, 7); // 2025年8月（0始まりなので7）
+</script>
+
+</body>
+</html>
