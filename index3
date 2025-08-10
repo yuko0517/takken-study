@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>宅建 学習スケジュール（忘却曲線＋進捗保存＋カレンダー）</title>
+<style>
+  :root{--pad:12px;--bg:#f6f7f9;--card:#fff;--muted:#6b7280;--line:#e5e7eb;--acc:#2563eb;--ok:#22c55e;--warn:#fbbf24}
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;margin:0;background:var(--bg)}
+  header{padding:16px 14px 8px}
+  h1{margin:0 0 6px;font-size:20px}
+  .meta{color:var(--muted);font-size:13px}
+  .tabs{display:flex;gap:8px;padding:8px 14px 12px}
+  .tab{flex:1;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff;text-align:center}
+  .tab.active{outline:2px solid var(--acc)}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;padding:0 14px 12px}
+  button{padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#fff}
+  button.primary{background:var(--acc);color:#fff;border-color:transparent}
+  .stats{padding:0 14px 12px;color:#333;font-size:14px}
+  .wrap{overflow:auto;border-top:1px solid var(--line)}
+  table{border-collapse:collapse;width:100%;background:#fff}
+  th,td{border:1px solid var(--line);padding:10px;text-align:left;font-size:14px}
+  th{background:#f1f5f9;position:sticky;top:0}
+  tr.learn{background:#e8fbe8}
+  tr.review{background:#fff8cc}
+  .muted{color:var(--muted);font-size:12px}
+
+  /* calendar */
+  .cal{padding:0 14px 14px}
+  .calbar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  .badge{border:1px solid var(--line);border-radius:999px;padding:6px 10px;background:#fff}
+  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .cell{background:#fff;border:1px solid var(--line);border-radius:12px;aspect-ratio:1/1.05;padding:6px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer}
+  .num{font-size:12px;color:#222}
+  .dots{display:flex;gap:3px;flex-wrap:wrap}
+  .dot{width:7px;height:7px;border-radius:50%}
+  .todo{background:var(--warn)}
+  .done{background:var(--ok)}
+  .out{opacity:.35}
+  .daylist{margin-top:10px;background:#fff;border:1px solid var(--line);border-radius:12px}
+  .li{display:flex;gap:8px;align-items:center;padding:10px;border-top:1px solid var(--line)}
+  .li:first-child{border-top:none}
+  .li .t{flex:1}
+</style>
+</head>
+<body>
+<header>
+  <h1>宅建 学習スケジュール</h1>
+  <div class="meta">忘却曲線：+1/+3/+7/+14/+30日。チェックは端末に自動保存。</div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-tab="list">一覧</div>
+  <div class="tab" data-tab="cal">カレンダー</div>
+</div>
+
+<!-- ===== 一覧ビュー ===== -->
+<section data-view="list">
+  <div class="toolbar">
+    <button id="showAll">全体表示</button>
+    <button id="showToday" class="primary">今日の予定</button>
+    <button id="showUndone">未完のみ</button>
+    <button id="clearDone">選択解除（この表示範囲）</button>
+    <button id="exportBtn">バックアップ</button>
+    <label for="importFile" style="padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer">復元</label>
+    <input id="importFile" type="file" accept="application/json" style="display:none">
+  </div>
+  <div class="stats" id="stats"></div>
+  <div class="wrap">
+    <table id="tbl">
+      <thead><tr><th>完了</th><th>日付</th><th>項目</th><th>状態</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===== カレンダービュー ===== -->
+<section data-view="cal" style="display:none">
+  <div class="cal">
+    <div class="calbar">
+      <button id="prevM">＜</button>
+      <div class="badge" id="ym"></div>
+      <button id="nextM">＞</button>
+      <button id="toToday">今日へ</button>
+    </div>
+    <div class="grid" id="grid"></div>
+
+    <div class="daylist" id="dayList" style="display:none"></div>
+  </div>
+</section>
+
+<script>
+/* ====== 生成ロジック（共通） ====== */
+const topics = ["宅：宅建業の基本","宅：宅建業の免許","宅：免許の欠格事由","宅：宅地建物取引士","宅：営業保証金","宅：保証協会","宅：事務所・案内所","宅：媒介契約","宅：35条書面","宅：37条書面","宅：監督処分・罰則","宅：報酬の制限","宅：8種制限","宅：住宅瑕疵担保履行法","宅：業務の諸規定、広告等","法：都市計画法1","法：都市計画法2","法：都市計画法3","法：都市計画法4","法：都市計画法5","法：都市計画法6","法：建築基準法1","法：建築基準法2","法：建築基準法3","法：国土利用計画法","法：農地法","法：土地区画整理法","法：盛土規制法","法：その他の法令（動画なし)"];
+const reviewOffsets=[0,1,3,7,14,30]; // 0=学習
+const start=new Date();
+
+const fmt=(d)=>`${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
+const iso=(d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+const DBKEY='takken_progress_v1';
+function load(){try{return JSON.parse(localStorage.getItem(DBKEY))||{};}catch(_){return{}}}
+function save(o){localStorage.setItem(DBKEY,JSON.stringify(o));}
+let doneMap=load();
+function keyOf(dateISO,topic,kind){return `${dateISO}|${topic}|${kind}`;}
+
+function buildData(){
+  const arr=[];
+  topics.forEach((t,i)=>{
+    reviewOffsets.forEach(off=>{
+      const d=new Date(start); d.setDate(d.getDate()+i+off);
+      arr.push({date:d,dateISO:iso(d),dateLabel:fmt(d),topic:t,kind:off===0?'学習':'復習',key:keyOf(iso(d),t,off===0?'learn':'review')});
+    });
+  });
+  arr.sort((a,b)=>a.date-b.date||a.topic.localeCompare(b.topic));
+  return arr;
+}
+const data=buildData();
+
+/* ====== タブ切替 ====== */
+document.querySelectorAll('.tab').forEach(t=>{
+  t.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    document.querySelectorAll('[data-view]').forEach(v=>v.style.display='none');
+    document.querySelector(`[data-view="${t.dataset.tab}"]`).style.display='block';
+    if(t.dataset.tab==='cal') renderMonth(curY,curM);
+    if(t.dataset.tab==='list') renderTable();
+  };
+});
+
+/* ====== 一覧テーブル ====== */
+const tbody=document.querySelector('#tbl tbody'); let rows=[];
+function renderTable(filterFn=null){
+  tbody.innerHTML=''; rows.length=0;
+  let total=0, completed=0, todayTotal=0, todayDone=0;
+  const todayISO=iso(new Date());
+
+  data.forEach(item=>{
+    if(filterFn && !filterFn(item)) return;
+    total++;
+    const tr=document.createElement('tr');
+    tr.className=item.kind==='学習'?'learn':'review';
+    const checked=!!doneMap[item.key];
+
+    if(item.dateISO===todayISO){todayTotal++; if(checked) todayDone++;}
+    if(checked) completed++;
+
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=checked;
+    cb.onchange=()=>{ if(cb.checked){doneMap[item.key]=true;}else{delete doneMap[item.key];} save(doneMap); updateStats(); renderMonth(curY,curM,true); };
+
+    const td0=document.createElement('td'); td0.appendChild(cb);
+    const td1=document.createElement('td'); td1.textContent=item.dateLabel;
+    const td2=document.createElement('td'); td2.innerHTML=`${item.topic} <span class="muted">(${item.dateISO})</span>`;
+    const td3=document.createElement('td'); td3.textContent=item.kind;
+
+    tr.append(td0,td1,td2,td3); tbody.appendChild(tr);
+    rows.push({tr,item,cb});
+  });
+
+  document.getElementById('stats').textContent=`全体：${total}件 / 完了：${completed}件 / 未完：${total-completed}件　｜　本日：${todayDone}/${todayTotal}件`;
+}
+function updateStats(){
+  let total=0, completed=0, todayTotal=0, todayDone=0;
+  const tISO=iso(new Date());
+  rows.forEach(({tr,cb,item})=>{
+    if(tr.style.display==='none') return;
+    total++; if(cb.checked) completed++;
+    if(item.dateISO===tISO){todayTotal++; if(cb.checked) todayDone++;}
+  });
+  document.getElementById('stats').textContent=`全体：${total}件 / 完了：${completed}件 / 未完：${total-completed}件　｜　本日：${todayDone}/${todayTotal}件`;
+}
+document.getElementById('showAll').onclick=()=>{rows.forEach(r=>r.tr.style.display='');updateStats();};
+document.getElementById('showToday').onclick=()=>{const t=iso(new Date()); rows.forEach(({item,tr})=>tr.style.display=(item.dateISO===t)?'':'none'); updateStats();};
+document.getElementById('showUndone').onclick=()=>{rows.forEach(({cb,tr})=>tr.style.display=cb.checked?'none':''); updateStats();};
+document.getElementById('clearDone').onclick=()=>{rows.forEach(({cb,item,tr})=>{if(tr.style.display!=='none'&&cb.checked){cb.checked=false; delete doneMap[item.key];}}); save(doneMap); updateStats();};
+
+/* Backup/Restore */
+document.getElementById('exportBtn').onclick=()=>{const blob=new Blob([JSON.stringify(doneMap,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='takken_progress_backup.json'; a.click();};
+document.getElementById('importFile').onchange=(e)=>{const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{try{doneMap=JSON.parse(r.result)||{}; save(doneMap); renderTable(); renderMonth(curY,curM,true);}catch(err){alert('復元失敗：'+err.message)}}; r.readAsText(f,'utf-8');};
+
+renderTable();
+
+/* ====== カレンダー ====== */
+const grid=document.getElementById('grid'); const ym=document.getElementById('ym'); const dayList=document.getElementById('dayList');
+let today=new Date(); let curY=today.getFullYear(), curM=today.getMonth()+1;
+
+function daysIn(y,m){return new Date(y,m,0).getDate();}
+function startDow(y,m){return new Date(y,m-1,1).getDay();}
+function setYMLabel(){ym.textContent=`${curY}年 ${curM}月`;}
+
+function itemsOn(ds){return data.filter(x=>x.dateISO===ds);}
+function countDone(items){return items.filter(x=>doneMap[x.key]).length;}
+
+function renderMonth(y,m,keep=false){
+  curY=y; curM=m; setYMLabel();
+  grid.innerHTML='';
+  const days=daysIn(y,m), start=startDow(y,m);
+  const totalCells=42; let dnum=1;
+
+  for(let i=0;i<totalCells;i++){
+    const inMonth = (i>=start && dnum<=days);
+    const cell = document.createElement('div'); cell.className='cell'+(inMonth?'':' out');
+    const num = document.createElement('div'); num.className='num'; num.textContent=inMonth?dnum:'';
+    const dots = document.createElement('div'); dots.className='dots';
+    let ds='';
+    if(inMonth){
+      const dt = new Date(y,m-1,dnum); ds = iso(dt);
+      const items = itemsOn(ds);
+      const done = countDone(items);
+      const todo = items.length-done;
+      for(let k=0;k<Math.min(6,todo);k++){const d=document.createElement('div'); d.className='dot todo'; dots.appendChild(d);}
+      for(let k=0;k<Math.min(6,done);k++){const d=document.createElement('div'); d.className='dot done'; dots.appendChild(d);}
+      cell.onclick=()=>openDay(ds);
+      dnum++;
+    }
+    cell.append(num,dots); grid.appendChild(cell);
+  }
+  if(!keep) dayList.style.display='none';
+}
+
+function openDay(ds){
+  const items=itemsOn(ds);
+  dayList.style.display='block';
+  dayList.innerHTML='';
+  const head=document.createElement('div'); head.className='li'; head.innerHTML=`<div class="t"><b>${ds}</b> のタスク（${items.length}件）</div><button id="closeDL">閉じる</button>`;
+  dayList.appendChild(head);
+  document.getElementById('closeDL').onclick=()=> dayList.style.display='none';
+
+  if(items.length===0){
+    const empty=document.createElement('div'); empty.className='li'; empty.innerHTML='<div class="t" style="color:#666">この日はタスクなし</div>';
+    dayList.appendChild(empty); return;
+  }
+
+  items.forEach(it=>{
+    const li=document.createElement('div'); li.className='li';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!doneMap[it.key];
+    cb.onchange=()=>{ if(cb.checked){doneMap[it.key]=true}else{delete doneMap[it.key]} save(doneMap); renderTable(); renderMonth(curY,curM,true); };
+    const t=document.createElement('div'); t.className='t'; t.innerHTML=`${it.topic} <span class="muted">（${it.kind}）</span>`;
+    li.append(cb,t); dayList.appendChild(li);
+  });
+}
+
+document.getElementById('prevM').onclick=()=>{let y=curY,m=curM-1; if(m===0){m=12;y--;} renderMonth(y,m);};
+document.getElementById('nextM').onclick=()=>{let y=curY,m=curM+1; if(m===13){m=1;y++;} renderMonth(y,m);};
+document.getElementById('toToday').onclick=()=>{const d=new Date(); renderMonth(d.getFullYear(),d.getMonth()+1);};
+
+renderMonth(curY,curM);
+</script>
+</body>
+</html>
